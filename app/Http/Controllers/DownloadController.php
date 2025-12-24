@@ -131,19 +131,29 @@ class DownloadController extends Controller
     {
         if (count($ids) === 1) {
             $file = File::find($ids[0]);
+            if (! $file) {
+                return ['message' => 'File not found.'];
+            }
             if ($file->is_folder) {
                 if ($file->children->count() === 0) {
                     return ['message' => 'The folder is empty.'];
                 }
-
                 $url = $this->createZip($file->children);
                 $filename = $file->name.'.zip';
             } else {
-                $destination = 'public/'.pathinfo($file->storage_path, PATHINFO_BASENAME);
-                Storage::copy($file->storage_path, $destination);
-
-                $url = asset(Storage::url($destination));
+                // Check if file exists
+                if (!Storage::exists($file->storage_path)) {
+                    return ['message' => 'File not found in storage.'];
+                }
+                $basename = pathinfo($file->storage_path, PATHINFO_BASENAME);
+                $destination = 'public/'.$basename;
+                // Only copy if not already exists or is outdated
+                if (!Storage::exists($destination) || Storage::lastModified($destination) < Storage::lastModified($file->storage_path)) {
+                    Storage::copy($file->storage_path, $destination);
+                }
+                $url = asset(Storage::url($basename));
                 $filename = $file->name;
+               
             }
         } else {
             $files = File::whereIn('id', $ids)->get();
