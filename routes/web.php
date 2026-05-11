@@ -49,9 +49,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
     });
 
     Route::name('files')->prefix('files')->controller(DownloadController::class)->group(function () {
-        Route::get('/download', 'fromMyFiles')->name('.download');
-        Route::get('/download/shared-with-me', 'sharedWithMe')->name('.downloadSharedWithMe');
-        Route::get('/download/shared-by-me', 'sharedByMe')->name('.downloadSharedByMe');
+        Route::get('/download', 'fromMyFiles')->name('.download')->middleware('throttle:60,1');
+        Route::get('/download/shared-with-me', 'sharedWithMe')->name('.downloadSharedWithMe')->middleware('throttle:60,1');
+        Route::get('/download/shared-by-me', 'sharedByMe')->name('.downloadSharedByMe')->middleware('throttle:60,1');
     });
 });
 

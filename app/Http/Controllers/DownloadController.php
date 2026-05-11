@@ -12,7 +12,7 @@ class DownloadController extends Controller
     /**
      * Donwload the file(s) or folder(s) from My Files section.
      *
-     * @return array
+     * @return \Illuminate\Http\Response|array
      */
     public function fromMyFiles(FileActionsRequest $request)
     {
@@ -23,26 +23,24 @@ class DownloadController extends Controller
         $ids = $payload['ids'] ?? [];
 
         if (! $all && empty($ids)) {
-            return ['message' => 'Please select at least one file or one folder to download.'];
+            return response()->json(['message' => 'Please select at least one file or one folder to download.'], 400);
         }
 
         if ($all) {
-            $url = $this->createZip($parent->children);
-            $filename = $parent->name.'.zip';
+            // Check authorization for all files
+            if (!$this->canAccessFiles($parent->children)) {
+                return response()->json(['message' => 'Unauthorized access.'], 403);
+            }
+            return $this->downloadZip($parent->children, $parent->name.'.zip');
         } else {
-            [$url, $filename] = $this->getDownloadUrl($ids, $parent->name);
+            return $this->downloadFiles($ids, $parent->name);
         }
-
-        return [
-            'url' => $url,
-            'filename' => $filename,
-        ];
     }
 
     /**
      * Donwload the file(s) or folder(s) from shared with me page.
      *
-     * @return array
+     * @return \Illuminate\Http\Response|array
      */
     public function sharedWithMe(FileActionsRequest $request)
     {
@@ -52,28 +50,22 @@ class DownloadController extends Controller
         $ids = $payload['ids'] ?? [];
 
         if (! $all && empty($ids)) {
-            return ['message' => 'Please select at least one file or one folder to download.'];
+            return response()->json(['message' => 'Please select at least one file or one folder to download.'], 400);
         }
 
         $zipFileName = 'shared-with-me';
         if ($all) {
             $files = File::getSharedWithMe()->get();
-            $url = $this->createZip($files);
-            $filename = $zipFileName.'.zip';
+            return $this->downloadZip($files, $zipFileName.'.zip');
         } else {
-            [$url, $filename] = $this->getDownloadUrl($ids, $zipFileName);
+            return $this->downloadFiles($ids, $zipFileName, true);
         }
-
-        return [
-            'url' => $url,
-            'filename' => $filename,
-        ];
     }
 
     /**
      * Donwload the file(s) or folder(s) from shared by me page.
      *
-     * @return array
+     * @return \Illuminate\Http\Response|array
      */
     public function sharedByMe(FileActionsRequest $request)
     {
@@ -83,22 +75,16 @@ class DownloadController extends Controller
         $ids = $payload['ids'] ?? [];
 
         if (! $all && empty($ids)) {
-            return ['message' => 'Please select at least one file or one folder to download.'];
+            return response()->json(['message' => 'Please select at least one file or one folder to download.'], 400);
         }
 
         $zipFileName = 'shared-by-me';
         if ($all) {
             $files = File::getSharedByMe()->get();
-            $url = $this->createZip($files);
-            $filename = $zipFileName.'.zip';
+            return $this->downloadZip($files, $zipFileName.'.zip');
         } else {
-            [$url, $filename] = $this->getDownloadUrl($ids, $zipFileName);
+            return $this->downloadFiles($ids, $zipFileName, false, true);
         }
-
-        return [
-            'url' => $url,
-            'filename' => $filename,
-        ];
     }
 
     /**
@@ -121,74 +107,119 @@ class DownloadController extends Controller
     }
 
     /**
-     * Get the download url and file name.
+     * Check if user can access the files.
+     *
+     * @param  \Illuminate\Support\Collection  $files
+     * @param  bool  $checkShared
+     * @param  bool  $checkSharedByMe
+     * @return bool
+     */
+    private function canAccessFiles($files, $checkShared = false, $checkSharedByMe = false)
+    {
+        foreach ($files as $file) {
+            // Check if user owns the file
+            if ($file->created_by === auth()->id()) {
+                continue;
+            }
+
+            // Check if file is shared with user
+            if ($checkShared) {
+                $isShared = \App\Models\FileShare::where('file_id', $file->id)
+                    ->where('user_id', auth()->id())
+                    ->exists();
+                if ($isShared) {
+                    continue;
+                }
+            }
+
+            // Check if file is shared by user
+            if ($checkSharedByMe) {
+                if ($file->created_by === auth()->id()) {
+                    continue;
+                }
+            }
+
+            // If none of the conditions met, unauthorized
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Download files with authorization check.
      *
      * @param  array  $ids
      * @param  string  $zipName
-     * @return array
+     * @param  bool  $checkShared
+     * @param  bool  $checkSharedByMe
+     * @return \Illuminate\Http\Response
      */
-    private function getDownloadUrl($ids, $zipName)
+    private function downloadFiles($ids, $zipName, $checkShared = false, $checkSharedByMe = false)
     {
         if (count($ids) === 1) {
             $file = File::find($ids[0]);
             if (! $file) {
-                return ['message' => 'File not found.'];
+                return response()->json(['message' => 'File not found.'], 404);
             }
+
+            // Authorization check
+            if (!$this->canAccessFiles(collect([$file]), $checkShared, $checkSharedByMe)) {
+                return response()->json(['message' => 'Unauthorized access.'], 403);
+            }
+
             if ($file->is_folder) {
                 if ($file->children->count() === 0) {
-                    return ['message' => 'The folder is empty.'];
+                    return response()->json(['message' => 'The folder is empty.'], 400);
                 }
-                $url = $this->createZip($file->children);
-                $filename = $file->name.'.zip';
+                return $this->downloadZip($file->children, $file->name.'.zip');
             } else {
-                // Check if file exists
+                // Check if file exists in storage
                 if (!Storage::exists($file->storage_path)) {
-                    return ['message' => 'File not found in storage.'];
+                    return response()->json(['message' => 'File not found in storage.'], 404);
                 }
-                $basename = pathinfo($file->storage_path, PATHINFO_BASENAME);
-                $destination = 'public/'.$basename;
-                // Only copy if not already exists or is outdated
-                if (!Storage::exists($destination) || Storage::lastModified($destination) < Storage::lastModified($file->storage_path)) {
-                    Storage::copy($file->storage_path, $destination);
-                }
-                $url = asset(Storage::url($basename));
-                $filename = $file->name;
-               
+                // Direct download from private storage
+                return response()->download(Storage::path($file->storage_path), $file->name);
             }
         } else {
             $files = File::whereIn('id', $ids)->get();
-            $url = $this->createZip($files);
-            $filename = $zipName.'.zip';
-        }
+            
+            // Authorization check
+            if (!$this->canAccessFiles($files, $checkShared, $checkSharedByMe)) {
+                return response()->json(['message' => 'Unauthorized access.'], 403);
+            }
 
-        return [$url, $filename];
+            return $this->downloadZip($files, $zipName.'.zip');
+        }
     }
 
     /**
-     * Create the zip containing files and/or folders that the user
-     * has requested to download.
+     * Create zip and return download response.
      *
-     * @param  array  $files
-     * @return string
+     * @param  \Illuminate\Support\Collection  $files
+     * @param  string  $zipName
+     * @return \Illuminate\Http\Response
      */
-    private function createZip($files)
+    private function downloadZip($files, $zipName)
     {
-        $zipPath = 'zip/'.Str::random().'.zip';
-        $publicPath = "public/$zipPath";
+        $zipPath = 'temp-zip/'.Str::random().'.zip';
+        $fullPath = Storage::path($zipPath);
 
-        if (! is_dir(dirname($publicPath))) {
-            Storage::makeDirectory(dirname($publicPath));
+        // Ensure directory exists
+        $dir = dirname($fullPath);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
         }
-
-        $zipFile = Storage::path($publicPath);
 
         $zip = new \ZipArchive();
-        if ($zip->open($zipFile, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) === true) {
+        if ($zip->open($fullPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) === true) {
             $this->addFilesToZip($zip, $files);
+            $zip->close();
+        } else {
+            return response()->json(['message' => 'Failed to create zip file.'], 500);
         }
 
-        $zip->close();
-
-        return asset(Storage::url($zipPath));
+        // Return download response and delete zip after sending
+        return response()->download($fullPath, $zipName)->deleteFileAfterSend(true);
     }
 }

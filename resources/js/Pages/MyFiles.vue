@@ -17,6 +17,8 @@ import { StarIcon as StarOutlineIcon } from "@heroicons/vue/24/outline";
 import { ON_SEARCH, emitter, showSuccessNotification, showErrorNotification } from "@/event-bus";
 import ShareFileButton from "@/Components/App/ShareFileButton.vue";
 import MoveFileModal from "@/Components/App/MoveFileModal.vue";
+import ShareFilesModal from "@/Components/App/ShareFilesModal.vue";
+import ConfirmationDialog from "@/Components/App/ConfirmationDialog.vue";
 
 const props = defineProps({
     files: Object,
@@ -37,6 +39,12 @@ const renamingFile = ref(null);
 const newFileName = ref('');
 const showMoveModal = ref(false);
 const fileToMove = ref(null);
+const showShareModal = ref(false);
+const showMobileActions = ref(false);
+const showDeleteConfirm = ref(false);
+const mobileSelectionMode = ref(false);
+const longPressTimer = ref(null);
+const suppressNextTap = ref(false);
 
 const selectedIds = computed(() => {
     return Object.entries(selected.value)
@@ -64,9 +72,14 @@ const loadMore = () => {
 };
 
 const onSelectAllChange = () => {
+    mobileSelectionMode.value = true;
     allFiles.value.data.forEach((f) => {
         selected.value[f.id] = allSelected.value;
     });
+
+    if (!allSelected.value) {
+        mobileSelectionMode.value = false;
+    }
 };
 
 const toggleFileSelect = (file) => {
@@ -94,6 +107,137 @@ const onSelectCheckboxChange = (file) => {
 const onDelete = () => {
     allSelected.value = false;
     selected.value = {};
+    mobileSelectionMode.value = false;
+};
+
+const startLongPress = (file) => {
+    if (longPressTimer.value) {
+        clearTimeout(longPressTimer.value);
+    }
+
+    longPressTimer.value = setTimeout(() => {
+        mobileSelectionMode.value = true;
+        suppressNextTap.value = true;
+
+        if (!selected.value[file.id]) {
+            selected.value[file.id] = true;
+            onSelectCheckboxChange(file);
+        }
+    }, 450);
+};
+
+const cancelLongPress = () => {
+    if (longPressTimer.value) {
+        clearTimeout(longPressTimer.value);
+        longPressTimer.value = null;
+    }
+};
+
+const handleMobileCardTap = (file) => {
+    if (suppressNextTap.value) {
+        suppressNextTap.value = false;
+        return;
+    }
+
+    if (mobileSelectionMode.value) {
+        toggleFileSelect(file);
+
+        if (!allSelected.value && selectedIds.value.length === 0) {
+            mobileSelectionMode.value = false;
+        }
+
+        return;
+    }
+
+    openFolder(file);
+};
+
+const hasSelectedFiles = computed(() => {
+    return allSelected.value || selectedIds.value.length > 0;
+});
+
+const deleteFileForm = useForm({
+    all: null,
+    ids: [],
+    parent_id: null,
+});
+
+const toggleMobileActions = () => {
+    showMobileActions.value = !showMobileActions.value;
+};
+
+const closeMobileActions = () => {
+    showMobileActions.value = false;
+};
+
+const openShareModal = () => {
+    if (!hasSelectedFiles.value) {
+        showErrorNotification("Please select at least one file or folder to share.");
+        return;
+    }
+
+    showShareModal.value = true;
+    closeMobileActions();
+};
+
+const closeShareModal = () => {
+    showShareModal.value = false;
+};
+
+const downloadSelected = () => {
+    if (!hasSelectedFiles.value) {
+        showErrorNotification("Please select at least one file or folder to download.");
+        return;
+    }
+
+    const urlParams = new URLSearchParams();
+
+    if (page.props.rootFolder?.id) {
+        urlParams.append("parent_id", page.props.rootFolder.id);
+    }
+
+    if (allSelected.value) {
+        urlParams.append("all", "1");
+    } else {
+        for (let id of selectedIds.value) {
+            urlParams.append("ids[]", id);
+        }
+    }
+
+    window.location.href = `${route("files.download")}?${urlParams.toString()}`;
+    closeMobileActions();
+};
+
+const openDeleteConfirm = () => {
+    if (!hasSelectedFiles.value) {
+        showErrorNotification("Please select at least one file or folder to delete.");
+        return;
+    }
+
+    showDeleteConfirm.value = true;
+    closeMobileActions();
+};
+
+const closeDeleteConfirm = () => {
+    showDeleteConfirm.value = false;
+};
+
+const confirmDelete = () => {
+    deleteFileForm.parent_id = page.props.rootFolder.id;
+    if (allSelected.value) {
+        deleteFileForm.all = true;
+        deleteFileForm.ids = [];
+    } else {
+        deleteFileForm.ids = selectedIds.value;
+    }
+
+    deleteFileForm.delete(route("files.destroy"), {
+        onSuccess: () => {
+            showDeleteConfirm.value = false;
+            showSuccessNotification("Selected files have been successfully deleted.");
+            onDelete();
+        },
+    });
 };
 
 const toggleFavourite = (file) => {
@@ -277,8 +421,8 @@ onMounted(() => {
     <AuthenticatedLayout>
         <Head title="My Files" />
 
-        <nav class="flex items-center justify-between p-1 mb-3">
-            <ol class="inline-flex items-center space-x-1">
+        <nav class="flex items-center justify-between gap-2 p-1 mb-3 sm:gap-3">
+            <ol class="inline-flex items-center space-x-1 min-w-0 overflow-x-auto flex-1 whitespace-nowrap">
                 <li
                     v-for="ancestor in ancestors.data"
                     :key="ancestor.id"
@@ -305,8 +449,8 @@ onMounted(() => {
                 </li>
             </ol>
 
-            <div class="flex items-center">
-                <label class="flex items-center mr-3">
+            <div class="flex items-center gap-2 flex-shrink-0 sm:justify-end">
+                <label class="hidden sm:flex items-center mr-3">
                     <Checkbox
                         v-model:checked="onlyFavourites"
                         @change="showOnlyFavourites"
@@ -315,26 +459,166 @@ onMounted(() => {
                     Only Favorites
                 </label>
 
-                <ShareFileButton
-                    :all-selected="allSelected"
-                    :selected-ids="selectedIds"
-                />
+                <label v-if="mobileSelectionMode" class="flex items-center text-xs sm:hidden">
+                    <Checkbox
+                        v-model:checked="allSelected"
+                        @change="onSelectAllChange"
+                        class="mr-2"
+                    />
+                    Select all
+                </label>
 
-                <DownloadFileButton
-                    :all="allSelected"
-                    :ids="selectedIds"
-                    class="mr-2"
-                />
+                <div class="relative sm:hidden dropdown-menu">
+                    <button
+                        type="button"
+                        class="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white p-2 text-gray-900 shadow-sm hover:bg-gray-50"
+                        @click.stop="toggleMobileActions"
+                        aria-label="Open actions"
+                    >
+                        <EllipsisVerticalIcon class="w-5 h-5" />
+                    </button>
 
-                <DeleteFileButton
-                    :delete-all="allSelected"
-                    :delete-ids="selectedIds"
-                    @delete="onDelete"
-                />
+                    <div
+                        v-if="showMobileActions"
+                        class="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg"
+                    >
+                        <button
+                            type="button"
+                            class="block w-full px-4 py-3 text-left text-sm text-gray-700 hover:bg-blue-50"
+                            @click="openShareModal"
+                        >
+                            Share
+                        </button>
+                        <button
+                            type="button"
+                            class="block w-full px-4 py-3 text-left text-sm text-gray-700 hover:bg-blue-50"
+                            @click="downloadSelected"
+                        >
+                            Download
+                        </button>
+                        <button
+                            type="button"
+                            class="block w-full px-4 py-3 text-left text-sm text-red-600 hover:bg-red-50"
+                            @click="openDeleteConfirm"
+                        >
+                            Delete
+                        </button>
+                    </div>
+                </div>
+
+                <div class="hidden sm:block">
+                    <ShareFileButton
+                        :all-selected="allSelected"
+                        :selected-ids="selectedIds"
+                    />
+                </div>
+
+                <div class="hidden sm:block">
+                    <DownloadFileButton
+                        :all="allSelected"
+                        :ids="selectedIds"
+                        class="mr-2"
+                    />
+                </div>
+
+                <div class="hidden sm:block">
+                    <DeleteFileButton
+                        :delete-all="allSelected"
+                        :delete-ids="selectedIds"
+                        @delete="onDelete"
+                    />
+                </div>
             </div>
         </nav>
 
         <div class="flex-1 overflow-auto">
+            <!-- Mobile: card list -->
+            <div class="block sm:hidden">
+                <div
+                    v-for="file in allFiles.data"
+                    :key="file.id"
+                    class="bg-white rounded shadow mb-3 p-3 cursor-pointer hover:bg-blue-50"
+                    @click="handleMobileCardTap(file)"
+                    @touchstart.passive="startLongPress(file)"
+                    @touchend="cancelLongPress"
+                    @touchcancel="cancelLongPress"
+                >
+                    <div class="flex items-start gap-3">
+                        <div v-if="mobileSelectionMode" class="pt-1">
+                            <Checkbox
+                                v-model="selected[file.id]"
+                                :checked="selected[file.id] || allSelected"
+                                @change="() => onSelectCheckboxChange(file)"
+                            />
+                        </div>
+
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-start justify-between gap-2 min-w-0">
+                                <div class="flex items-center gap-2 min-w-0 flex-1">
+                                    <FileIcon :file="file" class="flex-shrink-0" />
+                                    <div class="text-sm font-medium text-gray-900 min-w-0 flex-1">
+                                        <span v-if="renamingFile !== file.id" class="block truncate">{{ file.name }}</span>
+                                        <input
+                                            v-else
+                                            :id="`rename-input-${file.id}`"
+                                            v-model="newFileName"
+                                            @keydown="handleRenameKeydown($event, file)"
+                                            @blur="saveRename(file)"
+                                            @click.stop
+                                            class="w-full px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                            type="text"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div class="relative dropdown-menu flex-shrink-0">
+                                    <button
+                                        @click.stop="toggleDropdown(file.id)"
+                                        class="p-1 rounded-full hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <EllipsisVerticalIcon class="w-5 h-5 text-gray-500" />
+                                    </button>
+
+                                    <div
+                                        v-if="openDropdown === file.id"
+                                        class="absolute right-0 z-10 mt-1 w-36 bg-white border border-gray-200 rounded-md shadow-lg"
+                                    >
+                                        <div class="py-1">
+                                            <button
+                                                @click="renameFile(file)"
+                                                class="w-full px-4 py-2 text-left text-sm font-medium tracking-wider text-gray-700 hover:bg-blue-100 transition"
+                                            >
+                                                Rename
+                                            </button>
+                                            <button
+                                                @click="moveFile(file)"
+                                                class="w-full px-4 py-2 text-left text-sm font-medium tracking-wider text-gray-700 hover:bg-blue-100 transition"
+                                            >
+                                                Move
+                                            </button>
+                                            <button
+                                                @click="copyFile(file)"
+                                                class="w-full px-4 py-2 text-left text-sm font-medium tracking-wider text-gray-700 hover:bg-blue-100 transition"
+                                            >
+                                                Copy
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mt-2 text-xs text-gray-600 flex flex-wrap gap-3">
+                                <div class="truncate">{{ file.owner }}</div>
+                                <div>{{ file.size }}</div>
+                                <div>{{ file.updated_at }}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Desktop: table -->
+            <div class="hidden sm:block">
             <table
                 class="w-full text-sm text-left text-gray-500 rounded  shadow"
             >
@@ -350,10 +634,10 @@ onMounted(() => {
                         </th>
                         <th class=""></th>
                         <th class="pl-6 pr-0 py-3 w-7 max-w-7">Name</th>
-                        <th class="px-6 py-3" v-if="search">Path</th>
-                        <th class="px-6 py-3">Owner</th>
-                        <th class="px-6 py-3">Size</th>
-                        <th class="px-6 py-3">Last Modified</th>
+                        <th class="px-6 py-3 hidden sm:table-cell" v-if="search">Path</th>
+                        <th class="px-6 py-3 hidden sm:table-cell">Owner</th>
+                        <th class="px-6 py-3 hidden sm:table-cell">Size</th>
+                        <th class="px-6 py-3 hidden sm:table-cell">Last Modified</th>
                         <th class="px-6 py-3">Actions</th>
                     </tr>
                 </thead>
@@ -419,22 +703,22 @@ onMounted(() => {
                         </td>
                         <td
                             v-if="search"
-                            class="px-6 py-4 font-medium tracking-wider text-gray-900 whitespace-nowrap"
+                            class="px-6 py-4 font-medium tracking-wider text-gray-900 whitespace-nowrap hidden sm:table-cell"
                         >
                             {{ file.path }}
                         </td>
                         <td
-                            class="px-6 py-4 font-medium tracking-wider text-gray-900 whitespace-nowrap"
+                            class="px-6 py-4 font-medium tracking-wider text-gray-900 whitespace-nowrap hidden sm:table-cell"
                         >
                             {{ file.owner }}
                         </td>
                         <td
-                            class="px-6 py-4 font-medium tracking-wider text-gray-900 whitespace-nowrap"
+                            class="px-6 py-4 font-medium tracking-wider text-gray-900 whitespace-nowrap hidden sm:table-cell"
                         >
                             {{ file.size }}
                         </td>
                         <td
-                            class="px-6 py-4 font-medium tracking-wider text-gray-900 whitespace-nowrap"
+                            class="px-6 py-4 font-medium tracking-wider text-gray-900 whitespace-nowrap hidden sm:table-cell"
                         >
                             {{ file.updated_at }}
                         </td>
@@ -494,14 +778,28 @@ onMounted(() => {
             </div>
 
             <div ref="loadMoreIntersect"></div>
+            </div>
         </div>
         
         <!-- Move File Modal -->
+        <ShareFilesModal
+            v-model="showShareModal"
+            :all-selected="allSelected"
+            :selected-ids="selectedIds"
+        />
+
         <MoveFileModal 
             :show="showMoveModal" 
             :file="fileToMove" 
             @close="onMoveModalClose"
             @moved="onFileMoved"
+        />
+
+        <ConfirmationDialog
+            message="Are you sure you want to delete selected files? This method cannot be undone."
+            :show="showDeleteConfirm"
+            @cancel="closeDeleteConfirm"
+            @confirm="confirmDelete"
         />
     </AuthenticatedLayout>
 </template>
