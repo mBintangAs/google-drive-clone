@@ -160,10 +160,23 @@ class FileController extends Controller
      */
     private function getRoot()
     {
-        return File::query()
+        $root = File::query()
             ->where('created_by', auth()->id())
             ->whereIsRoot()
-            ->firstOrFail();
+            ->first();
+
+        if ($root) {
+            return $root;
+        }
+
+        $user = auth()->user();
+
+        $root = new File();
+        $root->is_folder = true;
+        $root->name = $user?->email ?? 'My Files';
+        $root->makeRoot()->save();
+
+        return $root;
     }
 
     /**
@@ -467,9 +480,63 @@ class FileController extends Controller
      *
      * @return \Inertia\Inertia
      */
-    public function sharedWithMe()
+    public function sharedWithMe(?string $folder = null)
     {
         $search = request()->search;
+
+        // If a folder path is provided, try to open that folder (if it's shared with the user)
+        if ($folder) {
+            $folderModel = File::query()->where('path', $folder)->firstOrFail();
+
+            // Check whether the folder or any of its ancestors is shared with the current user
+            $hasAccess = \App\Models\FileShare::where('file_id', $folderModel->id)
+                ->where('user_id', auth()->id())
+                ->exists();
+
+            if (! $hasAccess) {
+                foreach ($folderModel->ancestors as $ancestor) {
+                    if (\App\Models\FileShare::where('file_id', $ancestor->id)->where('user_id', auth()->id())->exists()) {
+                        $hasAccess = true;
+                        break;
+                    }
+                }
+            }
+
+            if (! $hasAccess) {
+                abort(403);
+            }
+
+            $query = File::query()
+                ->select('files.*')
+                ->where('parent_id', $folderModel->id)
+                ->orderBy('is_folder', 'DESC')
+                ->orderBy('files.created_at', 'DESC')
+                ->orderBy('files.id', 'DESC')
+                ->with(['starred:id,user_id,file_id,created_at']);
+
+            if ($search) {
+                $query->where('name', 'LIKE', "%{$search}%");
+            }
+
+            $files = $query->paginate(10);
+            $files = FileResource::collection($files);
+
+            if (request()->wantsJson()) {
+                return $files;
+            }
+
+            $ancestors = FileResource::collection([...$folderModel->ancestors, $folderModel]);
+            $folderResource = new FileResource($folderModel);
+
+            return Inertia::render('SharedWithMe', [
+                'files' => $files,
+                'search' => $search,
+                'folder' => $folderResource,
+                'rootFolder' => $folderResource,
+                'ancestors' => $ancestors,
+            ]);
+        }
+
         $query = File::getSharedWithMe();
         if ($search) {
             $query->where('name', 'LIKE', "%{$search}%");
@@ -485,6 +552,8 @@ class FileController extends Controller
         return Inertia::render('SharedWithMe', [
             'files' => $files,
             'search' => $search,
+            'folder' => null,
+            'ancestors' => FileResource::collection([]),
         ]);
     }
 
@@ -493,9 +562,48 @@ class FileController extends Controller
      *
      * @return \Inertia\Inertia
      */
-    public function sharedByMe()
+    public function sharedByMe(?string $folder = null)
     {
         $search = request()->search;
+
+        // If folder path provided, open folder if it belongs to current user
+        if ($folder) {
+            $folderModel = File::query()
+                ->where('path', $folder)
+                ->where('created_by', auth()->id())
+                ->firstOrFail();
+
+            $query = File::query()
+                ->select('files.*')
+                ->where('parent_id', $folderModel->id)
+                ->orderBy('is_folder', 'DESC')
+                ->orderBy('files.created_at', 'DESC')
+                ->orderBy('files.id', 'DESC')
+                ->with(['starred:id,user_id,file_id,created_at']);
+
+            if ($search) {
+                $query->where('name', 'LIKE', "%{$search}%");
+            }
+
+            $files = $query->paginate(10);
+            $files = FileResource::collection($files);
+
+            if (request()->wantsJson()) {
+                return $files;
+            }
+
+            $ancestors = FileResource::collection([...$folderModel->ancestors, $folderModel]);
+            $folderResource = new FileResource($folderModel);
+
+            return Inertia::render('SharedByMe', [
+                'files' => $files,
+                'search' => $search,
+                'folder' => $folderResource,
+                'rootFolder' => $folderResource,
+                'ancestors' => $ancestors,
+            ]);
+        }
+
         $query = File::getSharedByMe();
         if ($search) {
             $query->where('name', 'LIKE', "%{$search}%");
@@ -511,6 +619,8 @@ class FileController extends Controller
         return Inertia::render('SharedByMe', [
             'files' => $files,
             'search' => $search,
+            'folder' => null,
+            'ancestors' => FileResource::collection([]),
         ]);
     }
 }

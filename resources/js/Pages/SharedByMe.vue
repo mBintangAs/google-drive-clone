@@ -2,6 +2,7 @@
 import { Head, router } from "@inertiajs/vue3";
 import AuthenticatedLayout from "@/Layouts/AuthenticatedLayout.vue";
 import FileIcon from "@/Components/App/FileIcon.vue";
+import ImagePreviewModal from "@/Components/App/ImagePreviewModal.vue";
 import { ref, onMounted, onUpdated, computed } from "vue";
 import { httpGet } from "@/Helper/http-helper";
 import Checkbox from "@/Components/Checkbox.vue";
@@ -17,6 +18,33 @@ const allFiles = ref({
     data: props.files.data,
     next: props.files.links.next,
 });
+const showImagePreviewModal = ref(false);
+const previewFile = ref(null);
+
+const openFolder = (file) => {
+    if (!file.is_folder) {
+        return;
+    }
+
+    router.visit(route('sharedByMe', { folder: file.path }));
+};
+
+const isPreviewableImage = (file) => {
+    return !file.is_folder && typeof file.mime === "string" && file.mime.startsWith("image/");
+};
+
+const previewImage = (file) => {
+    if (!isPreviewableImage(file)) {
+        return;
+    }
+
+    previewFile.value = file;
+    showImagePreviewModal.value = true;
+};
+
+const closeImagePreview = () => {
+    showImagePreviewModal.value = false;
+};
 
 const allSelected = ref(false);
 const selected = ref({});
@@ -148,6 +176,7 @@ onMounted(() => {
                         "
                         v-for="file in allFiles.data"
                         :key="file.id"
+                        @dblclick="isPreviewableImage(file) ? previewImage(file) : openFolder(file)"
                         @click="($event) => toggleFileSelect(file)"
                     >
                         <td
@@ -165,8 +194,35 @@ onMounted(() => {
                             class="px-6 py-4 font-medium tracking-wider text-gray-900 whitespace-nowrap"
                         >
                             <div class="flex items-center">
-                                <FileIcon :file="file" />
-                                {{ file.name }}
+                                <button
+                                    v-if="isPreviewableImage(file)"
+                                    type="button"
+                                    class="mr-2 h-8 w-8 overflow-hidden rounded border border-gray-300"
+                                    @click.stop.prevent="previewImage(file)"
+                                >
+                                    <img
+                                        :src="route('files.preview', { file: file.id })"
+                                        :alt="file.name"
+                                        class="h-full w-full object-cover"
+                                    />
+                                </button>
+                                <FileIcon v-else :file="file" />
+                                <div class="ml-2">
+                                    <span v-if="file.is_folder">
+                                        <a @click.stop.prevent="openFolder(file)" class="font-medium text-blue-600 hover:underline">{{ file.name }}</a>
+                                    </span>
+                                    <span v-else>
+                                        {{ file.name }}
+                                    </span>
+                                    <button
+                                        v-if="isPreviewableImage(file)"
+                                        type="button"
+                                        @click.stop.prevent="previewImage(file)"
+                                        class="ml-2 text-xs font-medium text-blue-600 hover:underline"
+                                    >
+                                        Preview
+                                    </button>
+                                </div>
                             </div>
                         </td>
                         <td
@@ -187,5 +243,12 @@ onMounted(() => {
 
             <div ref="loadMoreIntersect"></div>
         </div>
+
+        <ImagePreviewModal
+            v-model="showImagePreviewModal"
+            :image-src="previewFile ? route('files.preview', { file: previewFile.id }) : ''"
+            :file-name="previewFile?.name || 'Image preview'"
+            @update:modelValue="closeImagePreview"
+        />
     </AuthenticatedLayout>
 </template>

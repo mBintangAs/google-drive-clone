@@ -4,11 +4,45 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\FileActionsRequest;
 use App\Models\File;
+use App\Models\FileShare;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 class DownloadController extends Controller
 {
+    /**
+     * Preview image file inline without exposing storage path.
+     *
+     * @return \Illuminate\Http\Response
+     */
+    public function preview(File $file)
+    {
+        if ($file->is_folder) {
+            return response()->json(['message' => 'Folder cannot be previewed.'], 400);
+        }
+
+        $mime = $file->mime ?: Storage::mimeType($file->storage_path);
+
+        if (! $mime || ! str_starts_with($mime, 'image/')) {
+            return response()->json(['message' => 'Preview is only available for image files.'], 400);
+        }
+
+        if (! $this->canPreviewFile($file)) {
+            return response()->json(['message' => 'Unauthorized access.'], 403);
+        }
+
+        if (! Storage::exists($file->storage_path)) {
+            return response()->json(['message' => 'File not found in storage.'], 404);
+        }
+
+        return response()->file(Storage::path($file->storage_path), [
+            'Content-Type' => $mime,
+            'Content-Disposition' => 'inline; filename="'.$file->name.'"',
+            'X-Content-Type-Options' => 'nosniff',
+            'Cache-Control' => 'private, max-age=300',
+        ]);
+    }
+
     /**
      * Donwload the file(s) or folder(s) from My Files section.
      *
@@ -144,6 +178,39 @@ class DownloadController extends Controller
         }
 
         return true;
+    }
+
+    /**
+     * Check if the current user can preview the file.
+     * Allows: owner, direct share, or share inherited from an ancestor folder.
+     *
+     * @return bool
+     */
+    private function canPreviewFile(File $file)
+    {
+        if ($file->created_by === auth()->id()) {
+            return true;
+        }
+
+        $isDirectlyShared = FileShare::where('file_id', $file->id)
+            ->where('user_id', auth()->id())
+            ->exists();
+
+        if ($isDirectlyShared) {
+            return true;
+        }
+
+        foreach ($file->ancestors as $ancestor) {
+            $isAncestorShared = FileShare::where('file_id', $ancestor->id)
+                ->where('user_id', auth()->id())
+                ->exists();
+
+            if ($isAncestorShared) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

@@ -29,8 +29,8 @@ Route::get('/dashboard', function () {
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::controller(FileController::class)->group(function () {
         Route::get('/my-files/{folder?}', 'index')->where('folder', '(.*)')->name('myFiles');
-        Route::get('/shared-with-me', 'sharedWithMe')->name('sharedWithMe');
-        Route::get('/shared-by-me', 'sharedByMe')->name('sharedByMe');
+        Route::get('/shared-with-me/{folder?}', 'sharedWithMe')->where('folder', '(.*)')->name('sharedWithMe');
+        Route::get('/shared-by-me/{folder?}', 'sharedByMe')->where('folder', '(.*)')->name('sharedByMe');
         Route::get('/trash', 'trash')->name('trash');
 
         Route::post('/folder/create', 'createFolder')->name('folder.create');
@@ -52,6 +52,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/download', 'fromMyFiles')->name('.download')->middleware('throttle:60,1');
         Route::get('/download/shared-with-me', 'sharedWithMe')->name('.downloadSharedWithMe')->middleware('throttle:60,1');
         Route::get('/download/shared-by-me', 'sharedByMe')->name('.downloadSharedByMe')->middleware('throttle:60,1');
+        Route::get('/preview/{file}', 'preview')->name('.preview')->middleware('throttle:120,1');
     });
 });
 
