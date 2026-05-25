@@ -33,8 +33,17 @@ const isPreviewableImage = (file) => {
     return !file.is_folder && typeof file.mime === "string" && file.mime.startsWith("image/");
 };
 
-const previewImage = (file) => {
-    if (!isPreviewableImage(file)) {
+const isPreviewableFile = (file) => {
+    return isPreviewableImage(file) || file.mime === "application/pdf" || file.mime === "application/x-pdf";
+};
+
+const previewFileAction = (file) => {
+    if (!isPreviewableFile(file)) {
+        return;
+    }
+
+    if (file.mime === "application/pdf" || file.mime === "application/x-pdf") {
+        window.open(route("files.preview", { file: file.id }), "_blank", "noopener,noreferrer");
         return;
     }
 
@@ -176,7 +185,7 @@ onMounted(() => {
                         "
                         v-for="file in allFiles.data"
                         :key="file.id"
-                        @dblclick="isPreviewableImage(file) ? previewImage(file) : openFolder(file)"
+                        @dblclick="isPreviewableFile(file) ? previewFileAction(file) : openFolder(file)"
                         @click="($event) => toggleFileSelect(file)"
                     >
                         <td
@@ -195,29 +204,39 @@ onMounted(() => {
                         >
                             <div class="flex items-center">
                                 <button
-                                    v-if="isPreviewableImage(file)"
+                                    v-if="isPreviewableFile(file)"
                                     type="button"
-                                    class="mr-2 h-8 w-8 overflow-hidden rounded border border-gray-300"
-                                    @click.stop.prevent="previewImage(file)"
+                                    class="mr-2 flex h-8 w-8 items-center justify-center overflow-hidden rounded border border-gray-300 bg-white"
+                                    @click.stop.prevent="previewFileAction(file)"
                                 >
                                     <img
+                                        v-if="isPreviewableImage(file)"
                                         :src="route('files.preview', { file: file.id })"
                                         :alt="file.name"
                                         class="h-full w-full object-cover"
                                     />
+                                    <FileIcon v-else :file="file" />
                                 </button>
                                 <FileIcon v-else :file="file" />
                                 <div class="ml-2">
                                     <span v-if="file.is_folder">
                                         <a @click.stop.prevent="openFolder(file)" class="font-medium text-blue-600 hover:underline">{{ file.name }}</a>
                                     </span>
+                                    <button
+                                        v-else-if="isPreviewableFile(file)"
+                                        type="button"
+                                        class="font-medium text-left text-gray-900 hover:underline"
+                                        @click.stop.prevent="previewFileAction(file)"
+                                    >
+                                        {{ file.name }}
+                                    </button>
                                     <span v-else>
                                         {{ file.name }}
                                     </span>
                                     <button
-                                        v-if="isPreviewableImage(file)"
+                                        v-if="isPreviewableFile(file)"
                                         type="button"
-                                        @click.stop.prevent="previewImage(file)"
+                                        @click.stop.prevent="previewFileAction(file)"
                                         class="ml-2 text-xs font-medium text-blue-600 hover:underline"
                                     >
                                         Preview
@@ -246,7 +265,7 @@ onMounted(() => {
 
         <ImagePreviewModal
             v-model="showImagePreviewModal"
-            :image-src="previewFile ? route('files.preview', { file: previewFile.id }) : ''"
+            :preview-src="previewFile ? route('files.preview', { file: previewFile.id }) : ''"
             :file-name="previewFile?.name || 'Image preview'"
             @update:modelValue="closeImagePreview"
         />

@@ -67,8 +67,18 @@ const isPreviewableImage = (file) => {
     return !file.is_folder && typeof file.mime === "string" && file.mime.startsWith("image/");
 };
 
-const previewImage = (file) => {
-    if (!isPreviewableImage(file)) {
+const isPreviewableFile = (file) => {
+    return isPreviewableImage(file) || file.mime === "application/pdf" || file.mime === "application/x-pdf";
+};
+
+const previewFileAction = (file) => {
+    if (!isPreviewableFile(file)) {
+        return;
+    }
+
+    if (file.mime === "application/pdf" || file.mime === "application/x-pdf") {
+        window.open(route("files.preview", { file: file.id }), "_blank", "noopener,noreferrer");
+        closeDropdown();
         return;
     }
 
@@ -170,8 +180,8 @@ const handleMobileCardTap = (file) => {
         return;
     }
 
-    if (isPreviewableImage(file)) {
-        previewImage(file);
+    if (isPreviewableFile(file)) {
+        previewFileAction(file);
         return;
     }
 
@@ -583,7 +593,15 @@ onMounted(() => {
                                 <div class="flex items-center gap-2 min-w-0 flex-1">
                                     <FileIcon :file="file" class="flex-shrink-0" />
                                     <div class="text-sm font-medium text-gray-900 min-w-0 flex-1">
-                                        <span v-if="renamingFile !== file.id" class="block truncate">{{ file.name }}</span>
+                                        <button
+                                            v-if="renamingFile !== file.id && isPreviewableFile(file)"
+                                            type="button"
+                                            class="block w-full truncate text-left"
+                                            @click.stop.prevent="previewFileAction(file)"
+                                        >
+                                            {{ file.name }}
+                                        </button>
+                                        <span v-else-if="renamingFile !== file.id" class="block truncate">{{ file.name }}</span>
                                         <input
                                             v-else
                                             :id="`rename-input-${file.id}`"
@@ -611,8 +629,8 @@ onMounted(() => {
                                     >
                                         <div class="py-1">
                                             <button
-                                                v-if="isPreviewableImage(file)"
-                                                @click="previewImage(file)"
+                                                v-if="isPreviewableFile(file)"
+                                                @click="previewFileAction(file)"
                                                 class="w-full px-4 py-2 text-left text-sm font-medium tracking-wider text-gray-700 hover:bg-blue-100 transition"
                                             >
                                                 Preview
@@ -685,7 +703,7 @@ onMounted(() => {
                         "
                         v-for="file in allFiles.data"
                         :key="file.id"
-                        @dblclick="isPreviewableImage(file) ? previewImage(file) : openFolder(file)"
+                        @dblclick="isPreviewableFile(file) ? previewFileAction(file) : openFolder(file)"
                         @click="($event) => toggleFileSelect(file)"
                     >
                         <td
@@ -721,19 +739,29 @@ onMounted(() => {
                         >
                             <div class="flex items-center">
                                 <button
-                                    v-if="isPreviewableImage(file)"
+                                    v-if="isPreviewableFile(file)"
                                     type="button"
-                                    class="mr-2 h-8 w-8 overflow-hidden rounded border border-gray-300"
-                                    @click.stop.prevent="previewImage(file)"
+                                    class="mr-2 flex h-8 w-8 items-center justify-center overflow-hidden rounded border border-gray-300 bg-white"
+                                    @click.stop.prevent="previewFileAction(file)"
                                 >
                                     <img
+                                        v-if="isPreviewableImage(file)"
                                         :src="route('files.preview', { file: file.id })"
                                         :alt="file.name"
                                         class="h-full w-full object-cover"
                                     />
+                                    <FileIcon v-else :file="file" class="h-5 w-5" />
                                 </button>
                                 <FileIcon v-else :file="file" />
-                                <span v-if="renamingFile !== file.id">{{ file.name }}</span>
+                                <button
+                                    v-if="renamingFile !== file.id && isPreviewableFile(file)"
+                                    type="button"
+                                    class="ml-1 block truncate text-left"
+                                    @click.stop.prevent="previewFileAction(file)"
+                                >
+                                    {{ file.name }}
+                                </button>
+                                <span v-else-if="renamingFile !== file.id">{{ file.name }}</span>
                                 <input
                                     v-else
                                     :id="`rename-input-${file.id}`"
@@ -784,8 +812,8 @@ onMounted(() => {
                                 >
                                     <div class="py-1">
                                         <button
-                                            v-if="isPreviewableImage(file)"
-                                            @click="previewImage(file)"
+                                            v-if="isPreviewableFile(file)"
+                                            @click="previewFileAction(file)"
                                             class="w-full px-4 py-2 text-left text-sm font-medium tracking-wider text-gray-700 hover:bg-blue-100 transition ease-in-out duration-200"
                                         >
                                             Preview
@@ -859,7 +887,7 @@ onMounted(() => {
 
         <ImagePreviewModal
             v-model="showImagePreviewModal"
-            :image-src="previewFile ? route('files.preview', { file: previewFile.id }) : ''"
+            :preview-src="previewFile ? route('files.preview', { file: previewFile.id }) : ''"
             :file-name="previewFile?.name || 'Image preview'"
             @update:modelValue="closeImagePreview"
         />

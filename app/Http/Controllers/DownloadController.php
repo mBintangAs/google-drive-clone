@@ -23,8 +23,11 @@ class DownloadController extends Controller
 
         $mime = $file->mime ?: Storage::mimeType($file->storage_path);
 
-        if (! $mime || ! str_starts_with($mime, 'image/')) {
-            return response()->json(['message' => 'Preview is only available for image files.'], 400);
+        $canPreview = $mime
+            && (str_starts_with($mime, 'image/') || in_array($mime, ['application/pdf', 'application/x-pdf'], true));
+
+        if (! $canPreview) {
+            return response()->json(['message' => 'Preview is only available for image and PDF files.'], 400);
         }
 
         if (! $this->canPreviewFile($file)) {

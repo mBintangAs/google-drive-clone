@@ -1,12 +1,12 @@
 <script setup>
 import Modal from "@/Components/App/Modal.vue";
 
-defineProps({
+const props = defineProps({
     modelValue: {
         type: Boolean,
         default: false,
     },
-    imageSrc: {
+    previewSrc: {
         type: String,
         default: "",
     },
@@ -41,11 +41,15 @@ const close = () => {
 
             <div class="flex max-h-[75vh] items-center justify-center overflow-hidden rounded bg-black/30 p-2">
                 <img
-                    v-if="imageSrc"
-                    :src="imageSrc"
+                    v-if="previewSrc"
+                    :src="previewSrc"
                     :alt="fileName"
                     class="max-h-[70vh] w-auto max-w-full rounded object-contain"
                 />
+
+                <div v-else class="py-10 text-sm text-white/80">
+                    Preview tidak tersedia untuk file ini.
+                </div>
             </div>
         </div>
     </Modal>
